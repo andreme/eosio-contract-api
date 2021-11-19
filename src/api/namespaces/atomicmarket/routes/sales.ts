@@ -2,7 +2,6 @@ import * as express from 'express';
 
 import { AtomicMarketNamespace, SaleApiState } from '../index';
 import { HTTPServer } from '../../../server';
-import { buildSaleFilter, hasListingFilter } from '../utils';
 import { fillSales } from '../filler';
 import { formatSale } from '../format';
 import { extendedAssetFilterParameters, atomicDataFilter, baseAssetFilterParameters } from '../../atomicassets/openapi';
@@ -13,9 +12,9 @@ import {
     paginationParameters,
     primaryBoundaryParameters
 } from '../../../docs';
-import { buildBoundaryFilter, filterQueryArgs } from '../../utils';
+import { filterQueryArgs } from '../../utils';
 import { listingFilterParameters } from '../openapi';
-import { buildAssetFilter, buildGreylistFilter, hasAssetFilter, hasDataFilters } from '../../atomicassets/utils';
+import { buildAssetFilter, buildGreylistFilter, hasAssetFilter } from '../../atomicassets/utils';
 import {
     createSocketApiNamespace,
     extractNotificationIdentifiers,
@@ -26,94 +25,13 @@ import { NotificationData } from '../../../../filler/notifier';
 import { OfferState } from '../../../../filler/handlers/atomicassets';
 import { SaleState } from '../../../../filler/handlers/atomicmarket';
 import QueryBuilder from '../../../builder';
-import { getSaleAction, getSaleLogsAction } from './handlers/sales';
+import { getSaleAction, getSaleLogsAction, getSalesAction, getSalesCountAction } from './handlers/sales';
 
 export function salesEndpoints(core: AtomicMarketNamespace, server: HTTPServer, router: express.Router): any {
     const {caching, returnAsJSON} = server.web;
 
-    router.all(['/v1/sales', '/v1/sales/_count'], server.web.caching(), async (req, res) => {
-        try {
-            const args = filterQueryArgs(req, {
-                page: {type: 'int', min: 1, default: 1},
-                limit: {type: 'int', min: 1, max: 100, default: 100},
-                collection_name: {type: 'string', min: 1},
-                state: {type: 'string', min: 1},
-                sort: {
-                    type: 'string',
-                    values: [
-                        'created', 'updated', 'sale_id', 'price',
-                        'template_mint'
-                    ],
-                    default: 'created'
-                },
-                order: {type: 'string', values: ['asc', 'desc'], default: 'desc'}
-            });
-
-            const query = new QueryBuilder(`
-                SELECT listing.sale_id 
-                FROM atomicmarket_sales listing 
-                    JOIN atomicassets_offers offer ON (listing.assets_contract = offer.contract AND listing.offer_id = offer.offer_id)
-                    LEFT JOIN atomicmarket_sale_prices price ON (price.market_contract = listing.market_contract AND price.sale_id = listing.sale_id)
-            `);
-
-            query.equal('listing.market_contract', core.args.atomicmarket_account);
-
-            buildSaleFilter(req, query);
-
-            if (!args.collection_name) {
-                buildGreylistFilter(req, query, {collectionName: 'listing.collection_name'});
-            }
-
-            buildBoundaryFilter(
-                req, query, 'listing.sale_id', 'int',
-                args.sort === 'updated' ? 'listing.updated_at_time' : 'listing.created_at_time'
-            );
-
-            if (req.originalUrl.search('/_count') >= 0) {
-                const countQuery = await server.query(
-                    'SELECT COUNT(*) counter FROM (' + query.buildString() + ') x',
-                    query.buildValues()
-                );
-
-                return res.json({success: true, data: countQuery.rows[0].counter, query_time: Date.now()});
-            }
-
-            const sortMapping: {[key: string]: {column: string, nullable: boolean, numericIndex: boolean}}  = {
-                sale_id: {column: 'listing.sale_id', nullable: false, numericIndex: true},
-                created: {column: 'listing.created_at_time', nullable: false, numericIndex: true},
-                updated: {column: 'listing.updated_at_time', nullable: false, numericIndex: true},
-                price: {column: args.state === '3' ? 'listing.final_price' : 'price.price', nullable: true, numericIndex: false},
-                template_mint: {column: 'LOWER(listing.template_mint)', nullable: true, numericIndex: false}
-            };
-
-            const ignoreIndex = (hasAssetFilter(req) || hasDataFilters(req) || hasListingFilter(req)) && sortMapping[args.sort].numericIndex;
-
-            query.append('ORDER BY ' + sortMapping[args.sort].column + (ignoreIndex ? ' + 1 ' : ' ') + args.order + ' ' + (sortMapping[args.sort].nullable ? 'NULLS LAST' : '') + ', listing.sale_id ASC');
-            query.append('LIMIT ' + query.addVariable(args.limit) + ' OFFSET ' + query.addVariable((args.page - 1) * args.limit));
-
-            const saleQuery = await server.query(query.buildString(), query.buildValues());
-
-            const saleLookup: {[key: string]: any} = {};
-            const result = await server.query(
-                'SELECT * FROM atomicmarket_sales_master WHERE market_contract = $1 AND sale_id = ANY ($2)',
-                [core.args.atomicmarket_account, saleQuery.rows.map(row => row.sale_id)]
-            );
-
-            result.rows.reduce((prev, current) => {
-                prev[String(current.sale_id)] = current;
-
-                return prev;
-            }, saleLookup);
-
-            const sales = await fillSales(
-                server, core.args.atomicassets_account, saleQuery.rows.map((row) => formatSale(saleLookup[String(row.sale_id)]))
-            );
-
-            res.json({success: true, data: sales, query_time: Date.now()});
-        } catch (error) {
-            return respondApiError(res, error);
-        }
-    });
+    router.all('/v1/sales', server.web.caching(), returnAsJSON(getSalesAction, core));
+    router.all('/v1/sales/_count', server.web.caching(), returnAsJSON(getSalesCountAction, core));
 
     router.all(['/v1/sales/templates'], server.web.caching(), async (req, res) => {
         try {
