@@ -7,4 +7,4 @@ export interface ActionHandlerContext<T> {
     core: T,
 }
 
-export type ActionHandler = (params: RequestParams, context: ActionHandlerContext<any>) => Promise<any>;
+export type ActionHandler = (params: RequestParams, ctx: ActionHandlerContext<any>) => Promise<any>;

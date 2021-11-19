@@ -17,19 +17,20 @@ import { buildBoundaryFilter, filterQueryArgs } from '../../utils';
 import { listingFilterParameters } from '../openapi';
 import { buildAssetFilter, buildGreylistFilter, hasAssetFilter, hasDataFilters } from '../../atomicassets/utils';
 import {
-    applyActionGreylistFilters,
     createSocketApiNamespace,
     extractNotificationIdentifiers,
-    getContractActionLogs, respondApiError
+    respondApiError
 } from '../../../utils';
 import ApiNotificationReceiver from '../../../notification';
 import { NotificationData } from '../../../../filler/notifier';
 import { OfferState } from '../../../../filler/handlers/atomicassets';
 import { SaleState } from '../../../../filler/handlers/atomicmarket';
 import QueryBuilder from '../../../builder';
-import { getSaleAction } from './handlers/sales';
+import { getSaleAction, getSaleLogsAction } from './handlers/sales';
 
 export function salesEndpoints(core: AtomicMarketNamespace, server: HTTPServer, router: express.Router): any {
+    const {caching, returnAsJSON} = server.web;
+
     router.all(['/v1/sales', '/v1/sales/_count'], server.web.caching(), async (req, res) => {
         try {
             const args = filterQueryArgs(req, {
@@ -216,29 +217,9 @@ export function salesEndpoints(core: AtomicMarketNamespace, server: HTTPServer, 
         }
     });
 
-    router.all('/v1/sales/:sale_id', server.web.caching(), server.web.wrapJSONHandler(getSaleAction, core));
+    router.all('/v1/sales/:sale_id', caching(), returnAsJSON(getSaleAction, core));
 
-    router.all('/v1/sales/:sale_id/logs', server.web.caching(), (async (req, res) => {
-        const args = filterQueryArgs(req, {
-            page: {type: 'int', min: 1, default: 1},
-            limit: {type: 'int', min: 1, max: 100, default: 100},
-            order: {type: 'string', values: ['asc', 'desc'], default: 'asc'}
-        });
-
-        try {
-            res.json({
-                success: true,
-                data: await getContractActionLogs(
-                    server, core.args.atomicmarket_account,
-                    applyActionGreylistFilters(['lognewsale', 'logsalestart', 'cancelsale', 'purchasesale'], args),
-                    {sale_id: req.params.sale_id},
-                    (args.page - 1) * args.limit, args.limit, args.order
-                ), query_time: Date.now()
-            });
-        } catch (error) {
-            return respondApiError(res, error);
-        }
-    }));
+    router.all('/v1/sales/:sale_id/logs', caching(), returnAsJSON(getSaleLogsAction, core));
 
     return {
         tag: {
