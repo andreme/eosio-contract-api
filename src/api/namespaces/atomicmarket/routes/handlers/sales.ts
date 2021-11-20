@@ -145,11 +145,11 @@ export async function getSalesTemplatesAction(params: RequestValues, ctx: Atomic
     });
 
     if (!args.symbol) {
-        throw new ApiError('symbol parameter is required', 416);
+        throw new ApiError('symbol parameter is required', 200);
     }
 
     if (!hasAssetFilter(params) && !args.collection_whitelist) {
-        throw new ApiError('You need to specify an asset filter!', 416);
+        throw new ApiError('You need to specify an asset filter!', 200);
     }
 
     const query = new QueryBuilder(`
